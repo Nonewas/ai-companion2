@@ -108,7 +108,6 @@ class OverlayService : Service() {
         val bounce = android.animation.ObjectAnimator.ofFloat(bubble, "rotation", -5f, 5f, -5f)
         bounce.duration = 200
         bounce.repeatCount = android.animation.ObjectAnimator.INFINITE
-        bounce.tag = "talking"
         bubble.setTag(bounce)
         bounce.start()
     }
