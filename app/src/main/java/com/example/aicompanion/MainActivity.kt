@@ -2,9 +2,11 @@ package com.example.aicompanion
 
 import android.content.Intent
 import android.content.SharedPreferences
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -23,6 +25,16 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: SharedPreferences
     private var selectedCharacter = "char1"
+
+    private val screenCaptureLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == RESULT_OK && result.data != null) {
+                val serviceIntent = Intent(this, OverlayService::class.java)
+                serviceIntent.putExtra("mp_result_code", result.resultCode)
+                serviceIntent.putExtra("mp_data", result.data)
+                startService(serviceIntent)
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         characters.forEach { (name, resId) ->
             val img = ImageView(this).apply {
                 setImageResource(resId)
+                setPadding(12, 12, 12, 12)
                 layoutParams = LinearLayout.LayoutParams(150, 150).apply {
                     setMargins(10, 10, 10, 10)
                 }
@@ -90,14 +103,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        val disableButton = Button(this).apply {
+            text = "Disable Floating Character"
+            setPadding(0, 20, 0, 0)
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, OverlayService::class.java))
+            }
+        }
+
+        val screenButton = Button(this).apply {
+            text = "Enable Screen Understanding"
+            setPadding(0, 20, 0, 0)
+            setOnClickListener {
+                val projectionManager =
+                    getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
+            }
+        }
+
         mainLayout.addView(enableButton)
+        mainLayout.addView(disableButton)
+        mainLayout.addView(screenButton)
         setContentView(mainLayout)
     }
 
     override fun onResume() {
         super.onResume()
-        if (Settings.canDrawOverlays(this)) {
-            startService(Intent(this, OverlayService::class.java))
-        }
     }
 }
