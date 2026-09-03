@@ -10,6 +10,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import org.json.JSONObject
@@ -18,7 +19,7 @@ import java.net.URL
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
-    private lateinit var bubble: TextView
+    private lateinit var bubble: ImageView
     private var chatView: View? = null
 
     private val backendUrl = "https://ai-companion2-jet.vercel.app/api/chat"
@@ -39,10 +40,22 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        bubble = TextView(this).apply {
-            text = "🤖"
-            textSize = 28f
+        val prefs = getSharedPreferences("companion_prefs", MODE_PRIVATE)
+        val selectedCharacter = prefs.getString("selected_character", "char1") ?: "char1"
+
+        val imageRes = when (selectedCharacter) {
+            "char1" -> R.drawable.char1
+            "char2" -> R.drawable.char2
+            "char3" -> R.drawable.char3
+            else -> R.drawable.char1
         }
+
+        bubble = ImageView(this).apply {
+            setImageResource(imageRes)
+            layoutParams = android.view.ViewGroup.LayoutParams(150, 150)
+        }
+
+        startIdleAnimation()
 
         var initialX = 0
         var initialY = 0
@@ -80,6 +93,31 @@ class OverlayService : Service() {
         windowManager.addView(bubble, bubbleParams)
     }
 
+    private fun startIdleAnimation() {
+        val scaleUp = android.animation.ObjectAnimator.ofFloat(bubble, "scaleX", 1f, 1.08f, 1f)
+        val scaleUpY = android.animation.ObjectAnimator.ofFloat(bubble, "scaleY", 1f, 1.08f, 1f)
+        scaleUp.duration = 1500
+        scaleUpY.duration = 1500
+        scaleUp.repeatCount = android.animation.ObjectAnimator.INFINITE
+        scaleUpY.repeatCount = android.animation.ObjectAnimator.INFINITE
+        scaleUp.start()
+        scaleUpY.start()
+    }
+
+    private fun startTalkingAnimation() {
+        val bounce = android.animation.ObjectAnimator.ofFloat(bubble, "rotation", -5f, 5f, -5f)
+        bounce.duration = 200
+        bounce.repeatCount = android.animation.ObjectAnimator.INFINITE
+        bounce.tag = "talking"
+        bubble.setTag(bounce)
+        bounce.start()
+    }
+
+    private fun stopTalkingAnimation() {
+        (bubble.getTag() as? android.animation.ObjectAnimator)?.cancel()
+        bubble.rotation = 0f
+    }
+
     private fun toggleChat() {
         if (chatView != null) {
             windowManager.removeView(chatView)
@@ -108,8 +146,12 @@ class OverlayService : Service() {
                 val message = input.text.toString()
                 if (message.isNotBlank()) {
                     responseText.text = "Thinking..."
+                    startTalkingAnimation()
                     sendMessage(message) { reply ->
-                        responseText.post { responseText.text = reply }
+                        responseText.post {
+                            responseText.text = reply
+                            stopTalkingAnimation()
+                        }
                     }
                 }
             }
