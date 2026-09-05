@@ -177,20 +177,14 @@ class OverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val resultCode = intent?.getIntExtra("mp_result_code", -1) ?: -1
-            val data = intent?.getParcelableExtra<Intent>("mp_data")
-                android.widget.Toast.makeText(
-                        this,
-                                "onStartCommand: resultCode=$resultCode, dataPresent=${data != null}",
-                                        android.widget.Toast.LENGTH_LONG
-                                            ).show()
-                                                if (resultCode != -1 && data != null) {
-                                                        val projectionManager =
-                                                                    getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                                                            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
-                                                                                    android.widget.Toast.makeText(this, "MediaProjection acquired", android.widget.Toast.LENGTH_LONG).show()
-                                                                                        }
-                                                                                            return START_STICKY
-                                                                                            }dresultCode
+        val data = intent?.getParcelableExtra<Intent>("mp_data")
+        if (resultCode != -1 && data != null) {
+            val projectionManager =
+                getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+        }
+        return START_STICKY
+    }
 
     private fun startForegroundNotification() {
         val channelId = "companion_channel"
