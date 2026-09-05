@@ -29,6 +29,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.random.Random
 
 class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
@@ -39,6 +40,14 @@ class OverlayService : Service() {
     private val chatHistory = mutableListOf<Pair<String, String>>()
 
     private var mediaProjection: MediaProjection? = null
+
+    private val moveHandler = Handler(Looper.getMainLooper())
+    private var isUserInteracting = false
+    private var isChatOpen = false
+    private var targetX = 0
+    private var targetY = 0
+    private var isSitting = false
+    private var walkTick = 0
 
     private val bubbleParams = WindowManager.LayoutParams(
         180,
@@ -83,6 +92,7 @@ class OverlayService : Service() {
         bubble.setOnTouchListener { _, event ->
             when (event.action) {
                 android.view.MotionEvent.ACTION_DOWN -> {
+                    isUserInteracting = true
                     initialX = bubbleParams.x
                     initialY = bubbleParams.y
                     touchX = event.rawX
@@ -101,6 +111,7 @@ class OverlayService : Service() {
                 }
                 android.view.MotionEvent.ACTION_UP -> {
                     if (!isDrag) toggleChat()
+                    isUserInteracting = false
                     true
                 }
                 else -> false
@@ -108,6 +119,60 @@ class OverlayService : Service() {
         }
 
         windowManager.addView(bubble, bubbleParams)
+
+        pickNewTarget()
+        moveHandler.post(moveRunnable)
+    }
+
+    private val moveRunnable = object : Runnable {
+        override fun run() {
+            if (!isUserInteracting && !isChatOpen) {
+                if (isSitting) {
+                    // paused, doing nothing this tick
+                } else {
+                    val dx = targetX - bubbleParams.x
+                    val dy = targetY - bubbleParams.y
+                    val distance = Math.sqrt((dx * dx + dy * dy).toDouble())
+
+                    if (distance < 10) {
+                        isSitting = true
+                        bubble.scaleY = 1f
+                        bubble.rotation = 0f
+                        moveHandler.postDelayed({
+                            isSitting = false
+                            pickNewTarget()
+                        }, Random.nextLong(2000, 5000))
+                    } else {
+                        val stepSize = 6
+                        val stepX = (dx / distance * stepSize).toInt()
+                        val stepY = (dy / distance * stepSize).toInt()
+
+                        bubbleParams.x += stepX
+                        bubbleParams.y += stepY
+
+                        bubble.scaleX = if (dx < 0) -1f else 1f
+
+                        walkTick++
+                        val wobblePhase = (walkTick % 12)
+                        val squash = if (wobblePhase < 6) 0.92f else 1.05f
+                        val tilt = if (wobblePhase < 6) -4f else 4f
+                        bubble.scaleY = squash
+                        bubble.rotation = tilt
+
+                        windowManager.updateViewLayout(bubble, bubbleParams)
+                    }
+                }
+            }
+            moveHandler.postDelayed(this, 30)
+        }
+    }
+
+    private fun pickNewTarget() {
+        val metrics = resources.displayMetrics
+        val maxX = metrics.widthPixels - 180
+        val maxY = metrics.heightPixels - 400
+        targetX = Random.nextInt(0, if (maxX > 0) maxX else 1)
+        targetY = Random.nextInt(100, if (maxY > 100) maxY else 200)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -174,9 +239,16 @@ class OverlayService : Service() {
     private fun captureScreen(callback: (String?) -> Unit) {
         val projection = mediaProjection
         if (projection == null) {
+            android.widget.Toast.makeText(this, "No screen permission active", android.widget.Toast.LENGTH_SHORT).show()
             callback(null)
             return
         }
+
+        projection.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+            }
+        }, Handler(Looper.getMainLooper()))
 
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
@@ -185,16 +257,12 @@ class OverlayService : Service() {
 
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
 
-        val virtualDisplay: VirtualDisplay? = projection.createVirtualDisplay(
-            "ScreenCapture",
-            width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader.surface, null, null
-        )
+        var virtualDisplay: VirtualDisplay? = null
+        val handler = Handler(Looper.getMainLooper())
 
-        Handler(Looper.getMainLooper()).postDelayed({
+        reader.setOnImageAvailableListener({ imgReader ->
             try {
-                val image = reader.acquireLatestImage()
+                val image = imgReader.acquireLatestImage()
                 if (image != null) {
                     val planes = image.planes
                     val buffer = planes[0].buffer
@@ -217,25 +285,39 @@ class OverlayService : Service() {
                     scaled.compress(Bitmap.CompressFormat.JPEG, 70, outputStream)
                     val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
+                    virtualDisplay?.release()
+                    reader.close()
                     callback(base64)
                 } else {
+                    virtualDisplay?.release()
+                    reader.close()
                     callback(null)
                 }
             } catch (e: Exception) {
-                callback(null)
-            } finally {
+                android.widget.Toast.makeText(this@OverlayService, "Capture failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                 virtualDisplay?.release()
                 reader.close()
+                callback(null)
             }
-        }, 300)
+        }, handler)
+
+        virtualDisplay = projection.createVirtualDisplay(
+            "ScreenCapture",
+            width, height, density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            reader.surface, null, handler
+        )
     }
 
     private fun toggleChat() {
         if (chatView != null) {
             windowManager.removeView(chatView)
             chatView = null
+            isChatOpen = false
             return
         }
+
+        isChatOpen = true
 
         val outerLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -391,6 +473,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        moveHandler.removeCallbacksAndMessages(null)
         if (::bubble.isInitialized) windowManager.removeView(bubble)
         chatView?.let { windowManager.removeView(it) }
         mediaProjection?.stop()
